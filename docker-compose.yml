@@ -1,0 +1,152 @@
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+      - MONGO_INITDB_DATABASE=activity
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - app-network
+      
+  db:
+    image: postgres:latest
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: mydatabase
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - app-network
+      
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk' # Any base64 string   
+    networks:
+      - app-network  
+      
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: 'true'
+    networks:
+      - app-network   
+  eureka-service:
+    build: ./eureka
+    ports:
+      - "8761:8761"
+    networks:
+      - app-network
+      
+  user-service:
+    build: ./userservice
+    ports:
+      - "8081:8081"
+    depends_on:
+      - db    
+      - eureka-service
+    environment:
+      # Overriding properties with environment variables
+      SERVER_PORT: 8081
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/mydatabase
+      SPRING_DATASOURCE_USERNAME: myuser
+      SPRING_DATASOURCE_PASSWORD: mypassword 
+      # AUTO DDL SETTING
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_SHOW_SQL: "true"
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: true
+      eureka.client.serviceUrl.defaultZone: http://eureka-service:8761/eureka/      
+    networks:
+      - app-network
+      
+  activity-service:
+    build: ./activityservice
+    ports:
+      - "8082:8082"
+    depends_on:
+      - db    
+      - eureka-service
+      - user-service
+      - mongodb
+    environment:
+      # Overriding properties with environment variables
+      SERVER_PORT: 8082
+      KAFKA_TOPIC_NAME: activity-events
+      SPRING_KAFKA_BOOTSTRAP-SERVERS: kafka:9092 
+      SPRING_KAFKA_PRODUCER_KEY-SERIALIZER: org.apache.kafka.common.serialization.StringSerializer
+      SPRING_KAFKA_PRODUCER_VALUE-SERIALIZER: org.springframework.kafka.support.serializer.JsonSerializer
+      #SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/mydatabase
+      #SPRING_DATASOURCE_USERNAME: myuser
+      #SPRING_DATASOURCE_PASSWORD: mypassword
+      SPRING.DATA.MONGODB.URI: mongodb://admin:password@mongodb:27017/activity?authSource=admin
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: true
+      eureka.client.serviceUrl.defaultZone: http://eureka-service:8761/eureka/      
+    networks:
+      - app-network
+      
+  ai-service:
+    build: ./aiservice
+    ports:
+      - "8083:8083"
+    depends_on:
+      - db    
+      - eureka-service
+      - mongodb
+    environment:
+      # Overriding properties with environment variables
+      SERVER_PORT: 8083
+      KAFKA_TOPIC_NAME: activity-events
+      SPRING_KAFKA_BOOTSTRAP-SERVERS: kafka:9092 
+      SPRING.DATA.MONGODB.URI: mongodb://admin:password@mongodb:27017/airecommendationfitness?authSource=admin
+      SPRING.DATA.MONGODB.DATABASE: airecommendationfitness
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: true
+      eureka.client.serviceUrl.defaultZone: http://eureka-service:8761/eureka/
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_API_URL: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    networks:
+      - app-network
+
+  fitness-frontend:
+    build: ./fitness-frontend
+    ports:
+      - "4173:4173"  
+    networks:
+      - app-network      
+volumes:
+  pgdata:
+  mongo-data:
+  
+networks:
+  app-network:
+    driver: bridge
